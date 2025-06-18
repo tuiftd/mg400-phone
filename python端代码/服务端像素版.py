@@ -2,11 +2,186 @@ import socket
 import threading
 from fenge import parse_data_new
 import numpy as np
+import json
 client_threads = []  # 保存所有客户端线程
 client_sockets = []  # 用于保存所有客户端socket
 client_sockets_lock = threading.Lock()  # 客户端socket列表的锁
 client_dict = {}  # 用于保存客户端名字到socket和address的映射
+target_all = []  # 用于保存所有目标数据
 running = False
+
+def load_camera_params():
+    """从JSON文件加载相机参数"""
+    try:
+        with open("camera_params.json", 'r') as f:
+            data = json.load(f)
+        
+        K = np.array(data["CameraMatrix"])
+        dist = np.array(data["DistCoeffs"])
+        R = np.array(data["Rotation"])
+        t = np.array(data["TranslationVector"])
+        
+        print("成功从camera_params.json加载相机参数")
+        return K, dist, R, t
+    except FileNotFoundError:
+        print("错误：找不到camera_params.json文件")
+        return None, None, None, None
+    except Exception as e:
+        print(f"加载相机参数时出错：{e}")
+        return None, None, None, None
+
+K, dist, R, t = load_camera_params()
+def load_transform_matrix():
+    """从JSON文件加载相机到机械臂的变换矩阵"""
+    try:
+        with open("cam2robot_transform.json", 'r') as f:
+            data = json.load(f)
+        
+        # 检查是否是2x3仿射矩阵
+        if "AffineMatrix" in data:
+            affine_matrix = np.array(data["AffineMatrix"])
+            # 转换为3x3齐次矩阵
+            M_cam2rob = np.vstack([affine_matrix, [0, 0, 1]])
+        # 检查是否是3x3齐次矩阵
+        elif "HomogeneousMatrix" in data:
+            M_cam2rob = np.array(data["HomogeneousMatrix"])
+        # 检查是否直接是TransformMatrix
+        elif "TransformMatrix" in data:
+            M_cam2rob = np.array(data["TransformMatrix"])
+        else:
+            print("错误：JSON文件中未找到有效的变换矩阵格式")
+            return None
+        
+        print("成功从cam2robot_transform.json加载变换矩阵")
+        print(f"变换矩阵:\n{M_cam2rob}")
+        return M_cam2rob
+        
+    except FileNotFoundError:
+        print("错误：找不到cam2robot_transform.json文件，使用默认矩阵")
+        # 返回默认变换矩阵
+        default_matrix = np.array([
+            [9.99277962e-01, 3.44535836e-02, 2.91991446e+02],
+            [-4.00650989e-02, 1.00289632e+00, -3.02108143e+01],
+            [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]
+        ])
+        print(f"使用默认变换矩阵:\n{default_matrix}")
+        return default_matrix
+    except Exception as e:
+        print(f"加载变换矩阵时出错：{e}")
+        return None
+M_cam2rob = load_transform_matrix()
+
+def process_target_phone_coordinates(target_dict, phone_dict, M_cam2rob):
+    """
+    处理目标和手机坐标字典，进行坐标变换
+    
+    Args:
+        target_dict (dict): 目标字典，格式为 {name: (x, y, R)}
+        phone_dict (dict): 手机字典，格式为 {name: (x, y, R)}
+        M_cam2rob (np.array): 相机到机械臂的变换矩阵
+    
+    Returns:
+        list: 包含变换结果的列表，每个元素为 ("ok", x_rob, y_rob, r_rob, x_phone, y_phone, r_phone)
+    """
+    result_list = []
+    
+    # 遍历target字典的所有键
+    for key_name in target_dict.keys():
+        # 检查phone字典中是否有相同的键
+        if key_name in phone_dict:
+            # 获取target和phone的坐标数据
+            target_x, target_y, target_r = target_dict[key_name]
+            phone_x, phone_y, phone_r = phone_dict[key_name]
+            
+            # 将target的像素坐标转换为世界坐标
+            target_pixel = (target_x, target_y)
+            target_world = pixel_to_world(target_pixel)
+            
+            # 将世界坐标转换为机械臂坐标
+            target_robot = transform_point(M_cam2rob, target_world)
+            x_rob, y_rob = target_robot
+            phone_pixel = (phone_x, phone_y)
+            phone_world = pixel_to_world(phone_pixel)
+            phone_robot = transform_point(M_cam2rob, phone_world)
+            phone_x, phone_y = phone_robot
+            # 角度转换（根据需要调整符号）
+            r_rob = target_r  # 根据原代码中的负号
+            
+            # 组装结果元组
+            result_tuple = ("ok", x_rob, y_rob, r_rob, phone_x, phone_y, phone_r)
+            result_list.append(result_tuple)
+            
+            print(f"处理 {key_name}: 目标({target_x}, {target_y}, {target_r}) -> 机械臂({x_rob:.3f}, {y_rob:.3f}, {r_rob:.3f}), 手机({phone_x}, {phone_y}, {phone_r})")
+        else:
+            print(f"警告: 在phone字典中未找到键 '{key_name}'，发送NG")
+            result_tuple = ("ng", x_rob, y_rob, r_rob,0,0,0)
+            result_list.append(result_tuple)
+    
+    return result_list
+
+def send_to_client(target_client_name, message):
+    """
+    向指定客户端发送消息
+    
+    Args:
+        target_client_name (str): 目标客户端名字
+        message (str): 要发送的消息
+    
+    Returns:
+        bool: 发送成功返回True，失败返回False
+    """
+    with client_sockets_lock:
+        if target_client_name in client_dict:
+            target_socket, target_address = client_dict[target_client_name]
+            try:
+                target_socket.send(message.encode('utf-8'))
+                print(f"已向客户端 '{target_client_name}' ({target_address}) 发送消息: {message}")
+                return True
+            except Exception as e:
+                print(f"向客户端 '{target_client_name}' 发送消息失败: {e}")
+                # 发送失败可能是因为客户端已断开，清理该客户端
+                cleanup_disconnected_client(target_client_name)
+                return False
+        else:
+            print(f"客户端 '{target_client_name}' 不存在")
+            return False
+def cleanup_disconnected_client(client_name):
+    """
+    清理断开连接的客户端
+    
+    Args:
+        client_name (str): 要清理的客户端名字
+    """
+    with client_sockets_lock:
+        if client_name in client_dict:
+            socket_obj, address = client_dict[client_name]
+            try:
+                socket_obj.close()
+            except:
+                pass
+            del client_dict[client_name]
+            
+            # 从socket列表中移除
+            if socket_obj in client_sockets:
+                client_sockets.remove(socket_obj)
+            
+            print(f"已清理断开的客户端: {client_name} ({address})")
+def send_to_client_safe(target_client_name, message, add_newline=True):
+    """
+    向指定客户端安全发送消息（带换行符）
+    
+    Args:
+        target_client_name (str): 目标客户端名字
+        message (str): 要发送的消息
+        add_newline (bool): 是否添加换行符
+    
+    Returns:
+        bool: 发送成功返回True，失败返回False
+    """
+    if add_newline and not message.endswith('\n'):
+        message += '\n'
+    
+    return send_to_client(target_client_name, message)
 def pixel_to_world(pixel):
     global K, dist, R, t
     u, v = pixel
@@ -48,7 +223,7 @@ def pixel_to_robot(pixel, M_cam2rob):
     
     return robot_x, robot_y
 def handle_client(client_socket, client_address):
-    global client_dict
+    global client_dict, target_all ,M_cam2rob, K, dist, R, t
     print(f"客户端 {client_address} 已连接")
     # 设置接收名字的超时时间（秒）
     NAME_TIMEOUT = 3
@@ -88,6 +263,13 @@ def handle_client(client_socket, client_address):
                 break
             message = data.decode('utf-8')
             print(f"来自 {client_name} 的消息: {message}")
+            if client_name == 'vision':
+                phone_dict,target_dict = parse_data_new(message)
+                if phone_dict and target_dict:
+                    target_all=process_target_phone_coordinates(target_dict, phone_dict, M_cam2rob)
+                    print(f"处理后的目标数据: {target_all}")
+
+
 
     except Exception as e:
         print(f"与 {client_address} 通信时发生错误: {e}")
