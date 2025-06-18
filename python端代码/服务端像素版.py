@@ -1,52 +1,84 @@
 import socket
 import threading
+from fenge import parse_data_new
+import numpy as np
 client_threads = []  # 保存所有客户端线程
 client_sockets = []  # 用于保存所有客户端socket
 client_sockets_lock = threading.Lock()  # 客户端socket列表的锁
 client_dict = {}  # 用于保存客户端名字到socket和address的映射
 running = False
+def pixel_to_world(pixel):
+    global K, dist, R, t
+    u, v = pixel
+    K_inv = np.linalg.inv(K)  # 计算相机内参逆矩阵
+    
+    # 计算归一化相机坐标
+    normalized_pixel = np.dot(K_inv, np.array([[u], [v], [1]], dtype=np.float32))
+    
+    # 使用外参矩阵R和t，假设Z=0平面
+    r1 = R[:, 0].reshape(3, 1)  # 旋转矩阵第一列
+    r2 = R[:, 1].reshape(3, 1)  # 旋转矩阵第二列
+    H = np.hstack([r1, r2, t])  # 构造单应性矩阵
+    H_inv = np.linalg.inv(H)
+    
+    # 计算世界坐标
+    world_point = np.dot(H_inv, normalized_pixel)
+    X, Y = world_point[:2].flatten() / world_point[2, 0]  # 归一化
+    
+    return X, Y
 
-
-def parse_data_to_point_pairs(data):
-    """解析数据，返回点对字典"""
-    # 拆分数据段
-    segments = data.strip().split(';')
-
-    # 提取名称和坐标
-    names = segments[0].split(',')
-    x_coords = list(map(float, segments[1].split(',')))
-    y_coords = list(map(float, segments[2].split(',')))
-
-    # 处理圆心部分
-    circle_segment = segments[3].split(',')
-    circle_name = circle_segment[0]
-    circle_x = float(circle_segment[1])
-    circle_y = float(circle_segment[2])
-    circle_r = float(circle_segment[3])
-
-    # 创建点对字典
-    point_pairs = {}
-
-    # 遍历名称和坐标，生成点对
-    for i in range(len(names)):
-        if i < len(x_coords) and i < len(y_coords):
-            point_pairs[names[i]] = (x_coords[i], y_coords[i])
-
-    # 添加圆心
-    point_pairs[circle_name] = (circle_x, circle_y)
-    point_pairs['org_r'] = circle_r
-
-    return point_pairs
-
-
-
-
+def transform_point(H, point):
+    """使用齐次变换矩阵变换点"""
+    x, y = point
+    # 转换为齐次坐标
+    homogeneous_point = np.array([x, y, 1])
+    # 应用变换矩阵
+    transformed = np.dot(H, homogeneous_point)
+    # 返回变换后的x, y坐标
+    return transformed[0], transformed[1]
+def pixel_to_robot(pixel, M_cam2rob):
+    """完整的像素到机械臂坐标变换"""
+    # 第一步：像素 → 世界坐标
+    world_x, world_y = pixel_to_world(pixel)
+    print(f"世界坐标: ({world_x:.3f}, {world_y:.3f})")
+    
+    # 第二步：世界坐标 → 机械臂坐标
+    robot_x, robot_y = transform_point(M_cam2rob, (world_x, world_y))
+    print(f"机械臂坐标: ({robot_x:.3f}, {robot_y:.3f})")
+    
+    return robot_x, robot_y
 def handle_client(client_socket, client_address):
     global client_dict
     print(f"客户端 {client_address} 已连接")
+    # 设置接收名字的超时时间（秒）
+    NAME_TIMEOUT = 3
+    
     try:
-        client_name = client_socket.recv(1024).decode('utf-8').strip()
-        print(f"客户端名字: {client_name}")
+        # 设置socket超时
+        client_socket.settimeout(NAME_TIMEOUT)
+        
+        try:
+            client_name = client_socket.recv(1024).decode('utf-8').strip()
+            print(f"客户端名字: {client_name}")
+        except socket.timeout:
+            # 超时处理
+            print(f"客户端 {client_address} 在 {NAME_TIMEOUT} 秒内未发送名字，发送提醒")
+            try:
+                client_socket.send("name".encode('utf-8'))
+                # 再给一次机会，延长超时时间
+                client_socket.settimeout(NAME_TIMEOUT)
+                client_name = client_socket.recv(1024).decode('utf-8').strip()
+                print(f"客户端名字: {client_name}")
+            except socket.timeout:
+                print(f"客户端 {client_address} 第二次超时，断开连接")
+                return
+            except Exception as e:
+                print(f"发送名字提醒失败: {e}")
+                return
+        
+        # 恢复为非阻塞或较长超时，用于正常通信
+        client_socket.settimeout(None)  # 或者设置为更长的超时时间
+        # print(f"客户端名字: {client_name}")
         with client_sockets_lock:
             client_dict[client_name] = (client_socket, client_address)
 
@@ -167,14 +199,7 @@ def main():
 
 if __name__ == "__main__":
     # 初始化
-    data = """
-    tixing,banyuan,liubianxing,wubianxing,yuanao;1015.258,1291.321,1271.461,1574.149,1005.777;823.065,833.598,1168.360,1173.516,1177.063;yuanxin,1334.604,1006.383,0.651;
-    """
-    point_pairs = parse_data_to_point_pairs(data)
-    print("点对储存结果如下：")
-    for name, point in point_pairs.items():
-        print(f"{name}: {point}")
-    source_point = point_pairs['yuanxin']
+    
     # ——————————————————————————————————————————————————————————————————————————
     main()
     print("程序结束")
