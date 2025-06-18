@@ -8,6 +8,7 @@ client_sockets = []  # 用于保存所有客户端socket
 client_sockets_lock = threading.Lock()  # 客户端socket列表的锁
 client_dict = {}  # 用于保存客户端名字到socket和address的映射
 target_all = []  # 用于保存所有目标数据
+num_targets = 0  # 用于保存目标数量
 running = False
 
 def load_camera_params():
@@ -223,7 +224,7 @@ def pixel_to_robot(pixel, M_cam2rob):
     
     return robot_x, robot_y
 def handle_client(client_socket, client_address):
-    global client_dict, target_all ,M_cam2rob, K, dist, R, t
+    global client_dict, target_all ,M_cam2rob, K, dist, R, t, num_targets
     print(f"客户端 {client_address} 已连接")
     # 设置接收名字的超时时间（秒）
     NAME_TIMEOUT = 3
@@ -268,6 +269,14 @@ def handle_client(client_socket, client_address):
                 if phone_dict and target_dict:
                     target_all=process_target_phone_coordinates(target_dict, phone_dict, M_cam2rob)
                     print(f"处理后的目标数据: {target_all}")
+                    # num_targets = len(target_all)
+            
+            if message.startswith('first'):
+                if num_targets < len(target_all):
+                    send_to_client_safe('qianduan', f"{target_all[num_targets]}")
+                    num_targets += 1
+
+
 
 
 
