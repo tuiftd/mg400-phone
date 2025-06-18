@@ -10,7 +10,9 @@ client_dict = {}  # 用于保存客户端名字到socket和address的映射
 target_all = []  # 用于保存所有目标数据
 num_targets = 0  # 用于保存目标数量
 running = False
-
+def format_target_for_send(target_data):
+    status, x_rob, y_rob, r_rob, x_phone, y_phone, r_phone = target_data
+    return f"{status},{x_rob:.3f},{y_rob:.3f},{r_rob:.3f},{x_phone:.3f},{y_phone:.3f},{r_phone:.3f}"
 def load_camera_params():
     """从JSON文件加载相机参数"""
     try:
@@ -32,6 +34,7 @@ def load_camera_params():
         return None, None, None, None
 
 K, dist, R, t = load_camera_params()
+
 def load_transform_matrix():
     """从JSON文件加载相机到机械臂的变换矩阵"""
     try:
@@ -273,8 +276,47 @@ def handle_client(client_socket, client_address):
             
             if message.startswith('first'):
                 if num_targets < len(target_all):
-                    send_to_client_safe('qianduan', f"{target_all[num_targets]}")
+                    formatted_data = format_target_for_send(target_all[num_targets])
+                    send_to_client_safe('qianduan', formatted_data)
                     num_targets += 1
+                else:
+                    try:
+                        send_to_client_safe('qianduan', 'over')
+                        # send_to_client_safe('rob', 'over')
+                    except Exception as e:
+                        print(f"发送结束消息失败: {e}")
+                    target_all = []
+                    num_targets = 0
+            elif message.startswith('go'):
+                if num_targets < len(target_all):
+                    try:
+                        formatted_data = format_target_for_send(target_all[num_targets])
+                        send_to_client_safe('qianduan', formatted_data)
+                        # send_to_client_safe('rob', formatted_data)
+                        num_targets += 1
+                    except Exception as e:
+                        print(f"发送数据失败: {e}")
+                else:
+                    try:
+                        send_to_client_safe('qianduan', 'over')
+                        # send_to_client_safe('rob', 'over')
+                    except Exception as e:
+                        print(f"发送结束消息失败: {e}")
+                    target_all = []
+                    num_targets = 0
+            elif message.startswith('clean'):
+                print(f"接收到清理命令，清空目标数据")
+                target_all = []
+                num_targets = 0
+            elif message.startswith('getimg'):
+                try:
+                    target_all = []
+                    num_targets = 0
+                    send_to_client_safe('vision', 'getimg',False)
+                    print(f"已向客户端 vision 发送拍照请求")
+                except Exception as e:
+                    print(f"发送图片请求失败: {e}")
+                
 
 
 
