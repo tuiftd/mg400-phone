@@ -50,7 +50,7 @@ plt.ion()  # 交互模式
 fig, ax = plt.subplots(1, 1, figsize=(10, 8))
 
 # 读取标定图像
-image_list = [f"vision/biaodingban/1_{j}.bmp" for j in range(1, 11)]
+image_list = [f"biaodingban/1_{j}.bmp" for j in range(1, 11)]
 for i, fname in enumerate(image_list):
     print(f"处理图像 {i+1}/10: {fname}")
     img = cv2.imread(fname)

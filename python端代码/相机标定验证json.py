@@ -85,7 +85,7 @@ except FileNotFoundError:
     exit()
 
 # 读取图像
-img = cv2.imread("vision/biaodingban/1_1.bmp")
+img = cv2.imread("biaodingban/1_1.bmp")
 if img is None:
     print("错误：无法读取图像文件")
     exit()

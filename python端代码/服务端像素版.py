@@ -38,7 +38,7 @@ K, dist, R, t = load_camera_params()
 def load_transform_matrix():
     """从JSON文件加载相机到机械臂的变换矩阵"""
     try:
-        with open("cam2robot_transform.json", 'r') as f:
+        with open("affine_transform.json", 'r') as f:
             data = json.load(f)
         
         # 检查是否是2x3仿射矩阵
@@ -109,7 +109,8 @@ def process_target_phone_coordinates(target_dict, phone_dict, M_cam2rob):
             phone_robot = transform_point(M_cam2rob, phone_world)
             phone_x, phone_y = phone_robot
             # 角度转换（根据需要调整符号）
-            r_rob = target_r  # 根据原代码中的负号
+            r_rob = -target_r  # 根据原代码中的负号
+            phone_r = -phone_r  # 同样处理手机的角度
             
             # 组装结果元组
             result_tuple = ("ok", x_rob, y_rob, r_rob, phone_x, phone_y, phone_r)
@@ -230,7 +231,7 @@ def handle_client(client_socket, client_address):
     global client_dict, target_all ,M_cam2rob, K, dist, R, t, num_targets
     print(f"客户端 {client_address} 已连接")
     # 设置接收名字的超时时间（秒）
-    NAME_TIMEOUT = 3
+    NAME_TIMEOUT = 5
     
     try:
         # 设置socket超时
@@ -278,11 +279,12 @@ def handle_client(client_socket, client_address):
                 if num_targets < len(target_all):
                     formatted_data = format_target_for_send(target_all[num_targets])
                     send_to_client_safe('qianduan', formatted_data)
+                    send_to_client_safe('rob', formatted_data)
                     num_targets += 1
                 else:
                     try:
                         send_to_client_safe('qianduan', 'over')
-                        # send_to_client_safe('rob', 'over')
+                        send_to_client_safe('rob', 'over',False)
                     except Exception as e:
                         print(f"发送结束消息失败: {e}")
                     target_all = []
@@ -292,14 +294,14 @@ def handle_client(client_socket, client_address):
                     try:
                         formatted_data = format_target_for_send(target_all[num_targets])
                         send_to_client_safe('qianduan', formatted_data)
-                        # send_to_client_safe('rob', formatted_data)
+                        send_to_client_safe('rob', formatted_data)
                         num_targets += 1
                     except Exception as e:
                         print(f"发送数据失败: {e}")
                 else:
                     try:
                         send_to_client_safe('qianduan', 'over')
-                        # send_to_client_safe('rob', 'over')
+                        send_to_client_safe('rob', 'over',False)
                     except Exception as e:
                         print(f"发送结束消息失败: {e}")
                     target_all = []

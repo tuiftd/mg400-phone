@@ -70,9 +70,9 @@ except Exception as e:
 
 # 原始 点对集,像素
 src_pts = np.array([
-    [846.107, 1242.420], 
-    [1838.762, 1311.622], 
-    [1218.233, 1759.726]
+    [1834.334, 479.278], 
+    [1086.803, 1109.172], 
+    [1856.575, 1587.861]
 ], dtype=np.float32)
 src_pts_wuli = []
 for src_pt in src_pts:
@@ -82,13 +82,13 @@ src_pts_wuli = np.array(src_pts_wuli, dtype=np.float32)
 print("原始点集:\n", src_pts_wuli)
 # 目标点集 
 dst_pts = np.array([
-    [317.93, 39.64], 
-    [322.92, -47.82],  
-    [362.84, 5.98]
+    [368.47, 77.73], 
+    [303.88, 23.34],  
+    [370.59, -18.71]
 ], dtype=np.float32)
 
 # 使用 RANSAC 估计仿射变换矩阵
-M, inliers = cv2.estimateAffine2D(src_pts_wuli, dst_pts, method=cv2.RANSAC, ransacReprojThreshold=0.2)
+M, inliers = cv2.estimateAffine2D(src_pts_wuli, dst_pts, method=cv2.RANSAC, ransacReprojThreshold=0.1)
 
 if M is None:
     print("仿射变换矩阵估计失败")
